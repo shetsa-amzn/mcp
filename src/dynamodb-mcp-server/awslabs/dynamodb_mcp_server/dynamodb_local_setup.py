@@ -3,14 +3,17 @@
 import subprocess
 import socket
 import time
-import urllib.request
 import shutil
+import boto3
+from botocore.exceptions import ClientError, EndpointConnectionError
 from loguru import logger
 from typing import Optional
 
 DEFAULT_PORT = 8000
 CONTAINER_NAME = "dynamodb-local-mcp-server"
 DOCKER_IMAGE = "amazon/dynamodb-local"
+MAX_ATTEMPTS = 7
+SLEEP_INTERVAL = 5
 
 def is_docker_available() -> bool:
     """Check if Docker is available and functional."""
@@ -103,22 +106,22 @@ def start_docker_container(port: int) -> str:
     
     endpoint = f"http://localhost:{port}"
     
-    # Wait for DynamoDB Local to be ready (up to 30 seconds)
-    for i in range(10):
+    # Wait for DynamoDB Local to be ready using boto3
+    for i in range(MAX_ATTEMPTS):
         try:
-            urllib.request.urlopen(endpoint, timeout=2)
+            client = boto3.client('dynamodb', endpoint_url=endpoint)
+            client.list_tables()
             logger.info(f"DynamoDB Local ready at {endpoint}")
             return endpoint
-        except (urllib.error.URLError, OSError) as e:
-            if i == 9:  # Last attempt
+        except (ClientError, EndpointConnectionError) as e:
+            if i == MAX_ATTEMPTS - 1:
+                total_timeout = MAX_ATTEMPTS * SLEEP_INTERVAL
                 raise RuntimeError(
-                    f"DynamoDB Local failed to start at {endpoint} after 10 seconds. "
+                    f"DynamoDB Local failed to start at {endpoint} after {total_timeout} seconds. "
                     f"Check Docker logs: docker logs {CONTAINER_NAME}. Last error: {e}"
                 )
-            logger.debug(f"DynamoDB Local not ready, retrying in 1s (attempt {i+1}/10)")
-            time.sleep(1)
-    
-    raise RuntimeError(f"Unexpected error waiting for DynamoDB Local at {endpoint}")
+            logger.debug(f"DynamoDB Local not ready, retrying in {SLEEP_INTERVAL}s (attempt {i+1}/{MAX_ATTEMPTS})")
+            time.sleep(SLEEP_INTERVAL)
 
 
 def setup_dynamodb_local() -> str:

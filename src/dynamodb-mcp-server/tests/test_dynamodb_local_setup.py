@@ -118,10 +118,14 @@ class TestDynamoDBLocalSetup:
         """Test Docker container start success."""
         with patch('awslabs.dynamodb_mcp_server.dynamodb_local_setup.shutil.which') as mock_which, \
              patch('subprocess.run') as mock_run, \
-             patch('urllib.request.urlopen') as mock_urlopen:
+             patch('awslabs.dynamodb_mcp_server.dynamodb_local_setup.boto3.client') as mock_boto3_client:
             mock_which.return_value = "/usr/local/bin/docker"
             mock_run.return_value = MagicMock()
-            mock_urlopen.return_value = MagicMock()  # Simulate successful connection
+            
+            # Mock boto3 client and list_tables call
+            mock_client = MagicMock()
+            mock_boto3_client.return_value = mock_client
+            mock_client.list_tables.return_value = {'TableNames': []}
             
             endpoint = start_docker_container(8000)
             assert endpoint == "http://localhost:8000"
@@ -131,7 +135,8 @@ class TestDynamoDBLocalSetup:
                 "/usr/local/bin/docker", "run", "-d", "--name", "dynamodb-local-mcp-server",
                 "-p", "8000:8000", "amazon/dynamodb-local"
             ], capture_output=True, text=True, check=True)
-            mock_urlopen.assert_called_with("http://localhost:8000", timeout=2)
+            mock_boto3_client.assert_called_with('dynamodb', endpoint_url="http://localhost:8000")
+            mock_client.list_tables.assert_called_once()
 
     def test_setup_dynamodb_local_reuse_existing(self):
         """Test setup reuses existing container."""
