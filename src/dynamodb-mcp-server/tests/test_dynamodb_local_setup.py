@@ -70,18 +70,19 @@ class TestDynamoDBLocalSetup:
         with patch('awslabs.dynamodb_mcp_server.dynamodb_local_setup.shutil.which') as mock_which, \
              patch('subprocess.run') as mock_run:
             mock_which.return_value = "/usr/local/bin/docker"
-            mock_run.return_value.stdout = "0.0.0.0:8001->8000/tcp"
+            
+            # Mock the three subprocess calls in order
+            mock_run.side_effect = [
+                MagicMock(stdout="container_id"),  # ps -a -q (container exists)
+                MagicMock(stdout="container_id"),  # ps -q (container is running)
+                MagicMock(stdout="0.0.0.0:8001->8000/tcp")  # ps --format (get ports)
+            ]
             
             endpoint = get_running_container_endpoint()
             assert endpoint == "http://localhost:8001"
             
             mock_which.assert_called_once_with("docker")
-            mock_run.assert_called_once_with(
-                ["/usr/local/bin/docker", "ps", "--format", "{{.Ports}}", "-f", "name=dynamodb-local-mcp-server"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
+            assert mock_run.call_count == 3
 
     def test_get_running_container_endpoint_not_found(self):
         """Test getting endpoint when no container is running."""
@@ -92,6 +93,26 @@ class TestDynamoDBLocalSetup:
             
             endpoint = get_running_container_endpoint()
             assert endpoint is None
+
+    def test_get_running_container_endpoint_stopped_container(self):
+        """Test getting endpoint when container exists but is stopped."""
+        with patch('awslabs.dynamodb_mcp_server.dynamodb_local_setup.shutil.which') as mock_which, \
+             patch('subprocess.run') as mock_run:
+            mock_which.return_value = "/usr/local/bin/docker"
+            
+            # Mock the subprocess calls: container exists, not running, then restart and get ports
+            mock_run.side_effect = [
+                MagicMock(stdout="container_id"),  # ps -a -q (container exists)
+                MagicMock(stdout=""),  # ps -q (container not running)
+                MagicMock(stdout=""),  # docker start (restart container)
+                MagicMock(stdout="0.0.0.0:8002->8000/tcp")  # ps --format (get ports after restart)
+            ]
+            
+            endpoint = get_running_container_endpoint()
+            assert endpoint == "http://localhost:8002"
+            
+            mock_which.assert_called_once_with("docker")
+            assert mock_run.call_count == 4
 
     def test_start_docker_container_success(self):
         """Test Docker container start success."""
