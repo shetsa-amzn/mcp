@@ -19,12 +19,17 @@ class TestDynamoDBLocalSetup:
     
     def test_is_docker_available_success(self):
         """Test Docker availability check when Docker is available."""
-        with patch('subprocess.run') as mock_run:
+        with patch('awslabs.dynamodb_mcp_server.dynamodb_local_setup.shutil.which') as mock_which, \
+             patch('subprocess.run') as mock_run:
+            mock_which.return_value = "/usr/local/bin/docker"
             mock_run.return_value = MagicMock()
+            
             result = is_docker_available()
             assert result is True
+            
+            mock_which.assert_called_once_with("docker")
             mock_run.assert_called_once_with(
-                ["docker", "--version"], 
+                ["/usr/local/bin/docker", "--version"], 
                 capture_output=True, 
                 check=True, 
                 timeout=5
@@ -32,8 +37,8 @@ class TestDynamoDBLocalSetup:
 
     def test_is_docker_available_failure(self):
         """Test Docker availability check when Docker is not available."""
-        with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = subprocess.CalledProcessError(1, 'docker')
+        with patch('awslabs.dynamodb_mcp_server.dynamodb_local_setup.shutil.which') as mock_which:
+            mock_which.return_value = None  # Docker not found
             result = is_docker_available()
             assert result is False
 
@@ -62,13 +67,17 @@ class TestDynamoDBLocalSetup:
 
     def test_get_running_container_endpoint_found(self):
         """Test getting endpoint when container is running."""
-        with patch('subprocess.run') as mock_run:
+        with patch('awslabs.dynamodb_mcp_server.dynamodb_local_setup.shutil.which') as mock_which, \
+             patch('subprocess.run') as mock_run:
+            mock_which.return_value = "/usr/local/bin/docker"
             mock_run.return_value.stdout = "0.0.0.0:8001->8000/tcp"
             
             endpoint = get_running_container_endpoint()
             assert endpoint == "http://localhost:8001"
+            
+            mock_which.assert_called_once_with("docker")
             mock_run.assert_called_once_with(
-                ["docker", "ps", "--format", "{{.Ports}}", "-f", "name=dynamodb-local-mcp-server"],
+                ["/usr/local/bin/docker", "ps", "--format", "{{.Ports}}", "-f", "name=dynamodb-local-mcp-server"],
                 capture_output=True,
                 text=True,
                 check=True
@@ -76,7 +85,9 @@ class TestDynamoDBLocalSetup:
 
     def test_get_running_container_endpoint_not_found(self):
         """Test getting endpoint when no container is running."""
-        with patch('subprocess.run') as mock_run:
+        with patch('awslabs.dynamodb_mcp_server.dynamodb_local_setup.shutil.which') as mock_which, \
+             patch('subprocess.run') as mock_run:
+            mock_which.return_value = "/usr/local/bin/docker"
             mock_run.return_value.stdout = ""
             
             endpoint = get_running_container_endpoint()
@@ -84,16 +95,19 @@ class TestDynamoDBLocalSetup:
 
     def test_start_docker_container_success(self):
         """Test Docker container start success."""
-        with patch('subprocess.run') as mock_run, \
+        with patch('awslabs.dynamodb_mcp_server.dynamodb_local_setup.shutil.which') as mock_which, \
+             patch('subprocess.run') as mock_run, \
              patch('urllib.request.urlopen') as mock_urlopen:
+            mock_which.return_value = "/usr/local/bin/docker"
             mock_run.return_value = MagicMock()
             mock_urlopen.return_value = MagicMock()  # Simulate successful connection
             
             endpoint = start_docker_container(8000)
             assert endpoint == "http://localhost:8000"
             
+            mock_which.assert_called_once_with("docker")
             mock_run.assert_called_once_with([
-                "docker", "run", "-d", "--name", "dynamodb-local-mcp-server",
+                "/usr/local/bin/docker", "run", "-d", "--name", "dynamodb-local-mcp-server",
                 "-p", "8000:8000", "amazon/dynamodb-local"
             ], capture_output=True, text=True, check=True)
             mock_urlopen.assert_called_with("http://localhost:8000", timeout=2)

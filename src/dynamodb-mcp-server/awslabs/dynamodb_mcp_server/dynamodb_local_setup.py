@@ -4,21 +4,23 @@ import subprocess
 import socket
 import time
 import urllib.request
-import logging
+import shutil
+from loguru import logger
 from typing import Optional
-
-logger = logging.getLogger(__name__)
 
 
 def is_docker_available() -> bool:
     """Check if Docker is available and functional."""
     try:
-        subprocess.run(["docker", "--version"], capture_output=True, check=True, timeout=5)
+        docker_path = shutil.which("docker")
+        if not docker_path:
+            return False
+        subprocess.run([docker_path, "--version"], capture_output=True, check=True, timeout=5)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         logger.debug(f"Docker not available: {e}")
         return False
-
+    
 
 def find_available_port(start_port: int = 8000) -> int:
     """Find the first available port starting from the given port."""
@@ -39,8 +41,12 @@ def get_running_container_endpoint() -> Optional[str]:
     container_name = "dynamodb-local-mcp-server"
     
     try:
+        docker_path = shutil.which("docker")
+        if not docker_path:
+            return None
+            
         # Check if container is running and get port mapping
-        check_cmd = ["docker", "ps", "--format", "{{.Ports}}", "-f", f"name={container_name}"]
+        check_cmd = [docker_path, "ps", "--format", "{{.Ports}}", "-f", f"name={container_name}"]
         result = subprocess.run(check_cmd, capture_output=True, text=True, check=True)
         
         if result.stdout.strip():
@@ -61,9 +67,13 @@ def start_docker_container(port: int) -> str:
     """Start DynamoDB Local Docker container."""
     container_name = "dynamodb-local-mcp-server"
     
+    docker_path = shutil.which("docker")
+    if not docker_path:
+        raise RuntimeError("Docker executable not found in PATH")
+    
     # Start fresh container
     cmd = [
-        "docker", "run", "-d", "--name", container_name,
+        docker_path, "run", "-d", "--name", container_name,
         "-p", f"{port}:8000",
         "amazon/dynamodb-local"
     ]
@@ -74,10 +84,10 @@ def start_docker_container(port: int) -> str:
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Failed to start Docker container: {e.stderr}")
     
-    # Wait for DynamoDB Local to be ready
     endpoint = f"http://localhost:{port}"
     
-    for i in range(10):  # Try for up to 10 seconds
+    # Wait for DynamoDB Local to be ready (up to 30 seconds)
+    for i in range(10):
         try:
             urllib.request.urlopen(endpoint, timeout=2)
             logger.info(f"DynamoDB Local ready at {endpoint}")
@@ -91,7 +101,6 @@ def start_docker_container(port: int) -> str:
             logger.debug(f"DynamoDB Local not ready, retrying in 1s (attempt {i+1}/10)")
             time.sleep(1)
     
-    # This should never be reached due to the raise in the loop
     raise RuntimeError(f"Unexpected error waiting for DynamoDB Local at {endpoint}")
 
 
@@ -116,7 +125,6 @@ def setup_dynamodb_local() -> str:
     if not has_docker:
         raise RuntimeError(
             "Docker is not available. Please install Docker Desktop from https://docker.com/products/docker-desktop "
-            "or install Java to use DynamoDB Local."
         )
     
     # Find available port
