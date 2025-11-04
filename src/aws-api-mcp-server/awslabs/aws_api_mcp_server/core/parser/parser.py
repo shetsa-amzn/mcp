@@ -20,9 +20,8 @@ import os
 import re
 from ..aws.regions import GLOBAL_SERVICE_REGIONS
 from ..aws.services import (
-    driver,
+    get_awscli_driver,
     get_operation_filters,
-    session,
 )
 from ..common.command import IRCommand, OutputFile
 from ..common.command_metadata import CommandMetadata
@@ -336,13 +335,15 @@ def is_denied_custom_operation(service, operation):
     )
 
 
+driver = get_awscli_driver()
+session = driver.session
 command_table = driver._get_command_table()
 cli_data = driver._get_cli_data()
 parser = GlobalArgParser.get_parser()
 driver._add_aliases(command_table, parser)
 
 
-def parse(cli_command: str) -> IRCommand:
+def parse(cli_command: str, default_region_override: str | None = None) -> IRCommand:
     """Parse a CLI command string into an IRCommand object."""
     tokens = split_cli_command(cli_command)
     # Strip `aws` and expand paths beginning with ~
@@ -352,18 +353,21 @@ def parse(cli_command: str) -> IRCommand:
 
     # Not all commands have parsers as some of them are "aliases" to existing services
     if isinstance(service_command, ServiceCommand):
-        return _handle_service_command(service_command, global_args, remaining)
+        return _handle_service_command(
+            service_command, global_args, remaining, default_region_override
+        )
 
     if service_command.name in DENIED_CUSTOM_SERVICES:
         raise ServiceNotAllowedError(service_command.name)
 
-    return _handle_awscli_customization(global_args, remaining, tokens[0])
+    return _handle_awscli_customization(global_args, remaining, tokens[0], default_region_override)
 
 
 def _handle_service_command(
     service_command: ServiceCommand,
     global_args: argparse.Namespace,
     remaining: list[str],
+    default_region_override: str | None = None,
 ):
     if not remaining:
         raise MissingOperationError()
@@ -442,6 +446,7 @@ def _handle_service_command(
         parameters=parameters,
         parsed_args=parsed_args,
         operation_model=operation_command._operation_model,
+        default_region_override=default_region_override,
     )
 
 
@@ -449,6 +454,7 @@ def _handle_awscli_customization(
     global_args: argparse.Namespace,
     remaining: list[str],
     service: str,
+    default_region_override: str | None = None,
 ) -> IRCommand:
     """This function handles awscli customizations (like aws s3 ls, aws s3 cp, aws s3 mv)."""
     if not remaining:
@@ -481,7 +487,7 @@ def _handle_awscli_customization(
 
     if not hasattr(operation_command, '_operation_model'):
         return _validate_customization_arguments(
-            operation_command, global_args, remaining, service, operation
+            operation_command, global_args, remaining, service, operation, default_region_override
         )
 
     raise InvalidServiceOperationError(service, operation)
@@ -528,6 +534,7 @@ def _validate_customization_arguments(
     remaining: list[str],
     service: str,
     operation: str,
+    default_region_override: str | None = None,
 ) -> IRCommand:
     """Validate arguments for awscli customizations using their argument table."""
     _validate_global_args(service, global_args)
@@ -559,6 +566,7 @@ def _validate_customization_arguments(
             global_args=global_args,
             parameters=parameters,
             is_awscli_customization=True,
+            default_region_override=default_region_override,
         )
     else:
         # This is a regular custom command without subcommands (or invalid subcommand)
@@ -583,6 +591,7 @@ def _validate_customization_arguments(
             global_args=global_args,
             parameters=parameters,
             is_awscli_customization=True,
+            default_region_override=default_region_override,
         )
 
 
@@ -833,6 +842,7 @@ def _construct_command(
     is_awscli_customization: bool = False,
     parsed_args: ParsedOperationArgs | None = None,
     operation_model: OperationModel | None = None,
+    default_region_override: str | None = None,
 ) -> IRCommand:
     _validate_file_paths(command_metadata, parsed_args, parameters)
     endpoint_url = getattr(global_args, 'endpoint_url', None)
@@ -842,6 +852,7 @@ def _construct_command(
     region = (
         getattr(global_args, 'region', None)
         or _fetch_region_from_arn(parameters)
+        or default_region_override
         or get_region(profile or AWS_API_MCP_PROFILE_NAME)
     )
 
